@@ -1,6 +1,7 @@
 import { Check, Keyboard, FolderOpen, Save, Share2, Sparkles, Undo2 } from 'lucide-react';
 
-export default function Header({ boardName, onRenameBoard, savedStatus, onUndo, onOpenShortcuts, onOpenMaps, onShare, onSave }) {
+export default function Header({ boardName, onRenameBoard, savedStatus, onUndo, onOpenShortcuts, onOpenMaps, onShare, onSave, userEmail, onSignOut }) {
+  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : 'TU';
   return (
     <header>
       <div className="brand">
@@ -37,8 +38,12 @@ export default function Header({ boardName, onRenameBoard, savedStatus, onUndo, 
         <button className="primary" onClick={onSave}>
           <Save size={16} /> Save
         </button>
-        <button className="avatar" title="User profile">
-          TU
+        <button
+          className="avatar"
+          title={onSignOut ? `${userEmail} — click to sign out` : 'User profile'}
+          onClick={onSignOut}
+        >
+          {initials}
         </button>
       </div>
     </header>

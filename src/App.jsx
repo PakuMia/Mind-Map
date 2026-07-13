@@ -9,6 +9,9 @@ import BoardCanvas from './components/BoardCanvas.jsx';
 import FloatBar from './components/FloatBar.jsx';
 import ConnectionPanel from './components/ConnectionPanel.jsx';
 import ZoomBar from './components/ZoomBar.jsx';
+import Auth from './Auth.jsx';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient.js';
+import { fetchCloudState, pushBoards, pushProjects, pushArchives } from './lib/cloudSync.js';
 
 import {
   ALIGN_OPTIONS,
@@ -127,6 +130,10 @@ export default function App() {
   const [showGrid, setShowGrid] = useState(() => localStorage.getItem('kkmm-grid') !== 'off');
   const [snapEnabled, setSnapEnabled] = useState(() => localStorage.getItem('kkmm-snap') === 'on');
 
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
+  const [cloudLoaded, setCloudLoaded] = useState(false);
+
   const floatbarDragRef = useRef(null);
   const gestureRef = useRef(null);
   const undoStackRef = useRef([]);
@@ -171,6 +178,78 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('kkmm-snap', snapEnabled ? 'on' : 'off');
   }, [snapEnabled]);
+
+  // --- cloud account (Supabase) -------------------------------------------
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      setCloudLoaded(false);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // First fetch after sign-in: adopt cloud data if any exists, otherwise
+  // this is a brand-new account, so push whatever's currently local (the
+  // starter/demo boards, or boards made while signed out) up to the cloud.
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session || cloudLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cloud = await fetchCloudState(session.user.id);
+        if (cancelled) return;
+        if (cloud.boards.length || cloud.projects.length) {
+          setBoards(cloud.boards);
+          if (cloud.projects.length) setProjects(cloud.projects);
+          setArchives(cloud.archives);
+        } else {
+          await Promise.all([
+            pushBoards(session.user.id, boards),
+            pushProjects(session.user.id, projects),
+            pushArchives(session.user.id, archives),
+          ]);
+        }
+      } catch (err) {
+        console.error('Cloud sync: initial load failed', err);
+      } finally {
+        if (!cancelled) setCloudLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, cloudLoaded]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session || !cloudLoaded) return;
+    const t = setTimeout(() => {
+      pushBoards(session.user.id, boards).catch((err) => console.error('Cloud sync: boards push failed', err));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [boards, session, cloudLoaded]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session || !cloudLoaded) return;
+    const t = setTimeout(() => {
+      pushProjects(session.user.id, projects).catch((err) => console.error('Cloud sync: projects push failed', err));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [projects, session, cloudLoaded]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session || !cloudLoaded) return;
+    const t = setTimeout(() => {
+      pushArchives(session.user.id, archives).catch((err) => console.error('Cloud sync: archives push failed', err));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [archives, session, cloudLoaded]);
 
   // hold Space to pan
   useEffect(() => {
@@ -1167,6 +1246,24 @@ export default function App() {
   }
   const placement = menuPlacement(contextMenu);
 
+  if (isSupabaseConfigured && authLoading) {
+    return (
+      <div className="auth-screen">
+        <p className="auth-loading">Loading…</p>
+      </div>
+    );
+  }
+  if (isSupabaseConfigured && !session) {
+    return <Auth />;
+  }
+  if (isSupabaseConfigured && !cloudLoaded) {
+    return (
+      <div className="auth-screen">
+        <p className="auth-loading">Syncing your boards…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <Header
@@ -1178,6 +1275,8 @@ export default function App() {
         onOpenMaps={() => setModal('files')}
         onShare={shareBoardLink}
         onSave={() => setSavedStatus('Saved')}
+        userEmail={session?.user?.email}
+        onSignOut={isSupabaseConfigured ? () => supabase.auth.signOut() : undefined}
       />
 
       <TopActionBar
